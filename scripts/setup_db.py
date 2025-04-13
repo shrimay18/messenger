@@ -6,78 +6,126 @@ import time
 import logging
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
-
+ 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Cassandra connection settings
+ 
 CASSANDRA_HOST = os.getenv("CASSANDRA_HOST", "localhost")
 CASSANDRA_PORT = int(os.getenv("CASSANDRA_PORT", "9042"))
 CASSANDRA_KEYSPACE = os.getenv("CASSANDRA_KEYSPACE", "messenger")
-
+ 
 def wait_for_cassandra():
     """Wait for Cassandra to be ready before proceeding."""
     logger.info("Waiting for Cassandra to be ready...")
     cluster = None
-    
+ 
     for _ in range(10):  # Try 10 times
         try:
-            cluster = Cluster([CASSANDRA_HOST])
+            cluster = Cluster([CASSANDRA_HOST], port=CASSANDRA_PORT)
             session = cluster.connect()
             logger.info("Cassandra is ready!")
             return cluster
         except Exception as e:
             logger.warning(f"Cassandra not ready yet: {str(e)}")
             time.sleep(5)  # Wait 5 seconds before trying again
-    
+ 
     logger.error("Failed to connect to Cassandra after multiple attempts.")
     raise Exception("Could not connect to Cassandra")
-
+ 
 def create_keyspace(session):
     """
     Create the keyspace if it doesn't exist.
-    
+ 
     This is where students will define the keyspace configuration.
     """
     logger.info(f"Creating keyspace {CASSANDRA_KEYSPACE} if it doesn't exist...")
-    
-    # TODO: Students should implement keyspace creation
-    # Hint: Consider replication strategy and factor for a distributed database
-    
+    query = """
+    CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{
+        'class': 'SimpleStrategy',
+        'replication_factor': 1
+    }}""".format(CASSANDRA_KEYSPACE)
+    session.execute(query)
+ 
     logger.info(f"Keyspace {CASSANDRA_KEYSPACE} is ready.")
-
+ 
 def create_tables(session):
     """
     Create the tables for the application.
-    
-    This is where students will define the table schemas based on the requirements.
+ 
+    This function creates the necessary tables to implement:
+    - Sending messages between users
+    - Fetching user conversations ordered by recent activity
+    - Fetching all messages in a conversation
+    - Fetching messages before a given timestamp (for pagination)
     """
     logger.info("Creating tables...")
-    
-    # TODO: Students should implement table creation
-    # Hint: Consider:
-    # - What tables are needed to implement the required APIs?
-    # - What should be the primary keys and clustering columns?
-    # - How will you handle pagination and time-based queries?
-    
-    logger.info("Tables created successfully.")
 
+    session.execute("""DROP TABLE IF EXISTS messenger.counter;""")
+    session.execute("""
+    CREATE TABLE IF NOT EXISTS counter (
+        counter_name TEXT,
+        counter_value COUNTER,
+        PRIMARY KEY (counter_name)
+    );
+    """)
+    logger.info("Created counters table")
+ 
+    session.execute("""DROP TABLE IF EXISTS messenger.messages;""")
+    session.execute("""
+    CREATE TABLE IF NOT EXISTS messages (
+        conversation_id INT,
+        timestamp TIMESTAMP,
+        message_id INT,
+        content TEXT,
+        sender_id INT,
+        receiver_id INT,
+        PRIMARY KEY (conversation_id, timestamp, message_id)
+    ) WITH CLUSTERING ORDER BY (timestamp DESC, message_id ASC);
+    """)
+    logger.info("Created messages table")
+
+    session.execute("""DROP TABLE IF EXISTS messenger.user_conversations;""")
+    session.execute("""
+    CREATE TABLE IF NOT EXISTS user_conversations (
+        sender_id INT,
+        receiver_id INT,
+        conversation_id INT,
+        last_timestamp TIMESTAMP,
+        last_message TEXT,
+        PRIMARY KEY (conversation_id)
+    );
+    """)
+    logger.info("Created user_conversations table")
+ 
+    session.execute("""DROP TABLE IF EXISTS messenger.conversation;""")
+    session.execute("""
+    CREATE TABLE IF NOT EXISTS conversation (
+        conversation_id INT,
+        sender_id INT,
+        receiver_id INT,
+        last_timestamp TIMESTAMP,
+        PRIMARY KEY (conversation_id, sender_id));
+    """)
+    logger.info("Created conversation table")
+ 
+    logger.info("Tables created successfully.")
+ 
 def main():
     """Initialize the database."""
     logger.info("Starting Cassandra initialization...")
-    
+ 
     # Wait for Cassandra to be ready
     cluster = wait_for_cassandra()
-    
+ 
     try:
         # Connect to the server
         session = cluster.connect()
-        
+ 
         # Create keyspace and tables
         create_keyspace(session)
         session.set_keyspace(CASSANDRA_KEYSPACE)
         create_tables(session)
-        
+ 
         logger.info("Cassandra initialization completed successfully.")
     except Exception as e:
         logger.error(f"Error during initialization: {str(e)}")
@@ -85,6 +133,6 @@ def main():
     finally:
         if cluster:
             cluster.shutdown()
-
+ 
 if __name__ == "__main__":
     main() 
